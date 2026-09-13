@@ -92,6 +92,36 @@ Two non-obvious pieces make this reliable:
 Per-device fan-out remains the default in the console; broadcast is opt-in via
 `use group <name>` or the group chips in the target picker.
 
+## AI console (optional)
+
+Point `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` at any OpenAI-compatible
+endpoint — DeepSeek, OpenAI, Ollama, vLLM — and the assistant appears in the
+sidebar. Leaving `AI_API_KEY` empty disables it.
+
+It shares the terminal interface of the real console — same prompt, arrow-key
+history, `help`/`clear`/`targets`/`use` built-ins. Proposals are numbered, and
+you approve one by clicking `▷ run 2` or simply typing `run 2`.
+
+It is given each selected device's OS, resource metrics and recent command
+history, and it drafts commands, explains failures and summarises fleet health.
+
+**It cannot execute anything.** The model proposes; a human reviews and clicks
+Run, and the command then takes the same path a hand-typed one does —
+`command:execute`, the rate limiter, the audit log.
+
+That separation is not ceremony. Command output from a managed machine is fed
+back as context, so a compromised device can emit text crafted to steer the
+model. Zenstier therefore wraps all device output in an explicit
+`DEVICE OUTPUT (untrusted data)` block and the system prompt states that such
+content is data to analyse, never an instruction to follow. Because the model
+has no execution path, a successful injection still cannot run anything: the
+worst case is a suggestion a human declines. Commands matching destructive
+patterns (`rm -rf`, `reboot`, piping a download into a shell, …) are flagged in
+the UI before you can run them.
+
+Using the assistant requires the `ai:use` permission and is recorded in the
+audit log with the prompt and model.
+
 ## Security model
 
 - **MQTTS everywhere.** Devices reach the broker only on TLS 8883. Plaintext
@@ -176,6 +206,36 @@ Two non-obvious pieces make this reliable:
 Per-device fan-out remains the default in the console; broadcast is opt-in via
 `use group <name>` or the group chips in the target picker.
 
+## AI console (optional)
+
+Point `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` at any OpenAI-compatible
+endpoint — DeepSeek, OpenAI, Ollama, vLLM — and the assistant appears in the
+sidebar. Leaving `AI_API_KEY` empty disables it.
+
+It shares the terminal interface of the real console — same prompt, arrow-key
+history, `help`/`clear`/`targets`/`use` built-ins. Proposals are numbered, and
+you approve one by clicking `▷ run 2` or simply typing `run 2`.
+
+It is given each selected device's OS, resource metrics and recent command
+history, and it drafts commands, explains failures and summarises fleet health.
+
+**It cannot execute anything.** The model proposes; a human reviews and clicks
+Run, and the command then takes the same path a hand-typed one does —
+`command:execute`, the rate limiter, the audit log.
+
+That separation is not ceremony. Command output from a managed machine is fed
+back as context, so a compromised device can emit text crafted to steer the
+model. Zenstier therefore wraps all device output in an explicit
+`DEVICE OUTPUT (untrusted data)` block and the system prompt states that such
+content is data to analyse, never an instruction to follow. Because the model
+has no execution path, a successful injection still cannot run anything: the
+worst case is a suggestion a human declines. Commands matching destructive
+patterns (`rm -rf`, `reboot`, piping a download into a shell, …) are flagged in
+the UI before you can run them.
+
+Using the assistant requires the `ai:use` permission and is recorded in the
+audit log with the prompt and model.
+
 ## Security
 
 Zenstier executes root shell commands by design, so the controls that matter
@@ -189,6 +249,7 @@ it.
 | Team-scoped queries (no cross-tenant reads) | every service and page |
 | Permission check inside every Server Action | `requirePermission()` |
 | Rank-based authority for role/member changes | `team.service.ts` |
+| AI can propose but never execute; output treated as data | `ai/prompts.ts` |
 | Deleting a team revokes every device credential first | `deleteTeam()` |
 | Failed-login limit (8/account, 20/IP per 15 min) | `auth.ts` `authorize()` |
 | Enrollment attempt limit (20/IP per 10 min) | `/api/v1/agent/enroll` |

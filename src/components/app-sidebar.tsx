@@ -29,6 +29,7 @@ import {
   CircleHelpIcon,
   SearchIcon,
   RadioTowerIcon,
+  SparklesIcon,
 } from "lucide-react"
 
 const navMain = [
@@ -49,6 +50,12 @@ const navMain = [
     url: "/dashboard/console",
     icon: <TerminalIcon />,
     permission: "command:read",
+  },
+  {
+    title: "AI console",
+    url: "/dashboard/ai",
+    icon: <SparklesIcon />,
+    permission: "ai:use",
   },
   {
     title: "Audit log",

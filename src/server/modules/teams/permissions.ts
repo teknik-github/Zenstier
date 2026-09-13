@@ -16,6 +16,8 @@ export const PERMISSIONS = [
   // Execution
   "command:read",
   "command:execute",
+  // Assistance
+  "ai:use",
   // Governance
   "audit:read",
   "team:read",
@@ -86,6 +88,13 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
     label: "Run commands",
     description: "Execute shell commands as root on team devices.",
     sensitive: true,
+  },
+  {
+    key: "ai:use",
+    group: "Commands",
+    label: "Use the AI console",
+    description:
+      "Ask the assistant to draft commands and explain output. It can only propose; running still needs Run commands.",
   },
   {
     key: "audit:read",
@@ -168,6 +177,7 @@ export const SYSTEM_ROLES: SystemRoleSpec[] = [
       "device:update",
       "command:read",
       "command:execute",
+      "ai:use",
       "audit:read",
       "team:read",
     ],

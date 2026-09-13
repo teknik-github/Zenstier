@@ -36,6 +36,17 @@ const envSchema = z.object({
 
   COMMAND_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(30),
 
+  /**
+   * AI console. Any OpenAI-compatible endpoint works — DeepSeek, OpenAI,
+   * Ollama, vLLM — so the provider is a deployment choice, not a code change.
+   * Leaving AI_API_KEY unset simply disables the feature.
+   */
+  AI_BASE_URL: z.string().min(1).default("https://api.deepseek.com"),
+  AI_API_KEY: z.string().optional(),
+  AI_MODEL: z.string().min(1).default("deepseek-chat"),
+  AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1500),
+  AI_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(60),
+
   /** Disables the MQTT worker; useful for `next build` and unit tests. */
   ZENSTIER_DISABLE_WORKER: z
     .union([z.literal("1"), z.literal("true")])
@@ -58,4 +69,7 @@ function loadEnv(): Env {
 export const env: Env = loadEnv();
 
 export const isProduction = env.NODE_ENV === "production";
+
+/** The AI console is only offered when a provider is actually configured. */
+export const isAiConfigured = Boolean(env.AI_API_KEY);
 export const isDevelopment = env.NODE_ENV === "development";

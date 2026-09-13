@@ -68,6 +68,7 @@ enum AuditAction {
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
   DEVICE_GROUP_DELETED
+  AI_CONSULTED
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

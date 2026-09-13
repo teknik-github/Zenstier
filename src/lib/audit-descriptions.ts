@@ -61,6 +61,7 @@ const ACTION_LABELS: Record<string, string> = {
   DEVICE_GROUP_CREATED: "Broadcast group created",
   DEVICE_GROUP_UPDATED: "Broadcast group changed",
   DEVICE_GROUP_DELETED: "Broadcast group deleted",
+  AI_CONSULTED: "AI console used",
 };
 
 export function auditLabel(action: string): string {
@@ -141,6 +142,12 @@ export function auditDetail(entry: AuditEntryLike): string {
         return `${name} · ${count} permission${count === 1 ? "" : "s"}`;
       }
       return name ?? "a role";
+    }
+
+    case "AI_CONSULTED": {
+      const prompt = str(m.prompt);
+      if (!prompt) return "a question";
+      return prompt.length > 70 ? `${prompt.slice(0, 70)}…` : prompt;
     }
 
     case "TEAM_INVITE_REVOKED":

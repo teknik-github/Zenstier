@@ -168,6 +168,29 @@ docker rm -f zenstier-dev-web-01     # tear one down
 
 ---
 
+## Optional: AI console
+
+Any OpenAI-compatible endpoint. Add to `.env` and restart:
+
+```bash
+AI_BASE_URL=https://api.deepseek.com   # or OpenAI, Ollama, vLLM…
+AI_API_KEY=sk-...
+AI_MODEL=deepseek-chat
+AI_RATE_LIMIT_PER_HOUR=60
+```
+
+The assistant drafts commands and explains output; it cannot run anything.
+Every proposal needs a human click, and running it goes through the same
+permission, rate limit and audit trail as a hand-typed command.
+
+Grant the `ai:use` permission under **Team → Roles & permissions**. Owner,
+Admin and Operator receive it by default.
+
+> Adding a permission to the catalogue does not retroactively grant it to roles
+> that were seeded by an older version. If you add your own permissions later,
+> ship an additive SQL migration the way
+> `prisma/migrations/*_grant_ai_use_to_system_roles` does.
+
 ## Production notes
 
 The default setup is a **development** one. Before exposing it:
