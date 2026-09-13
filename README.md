@@ -150,6 +150,43 @@ billed-at-full-rate portion.
 Cache effectiveness is logged on every call — look for `ai usage` with
 `cacheHitRate`.
 
+## Scheduling, alerting and 2FA
+
+**Schedules** run a command on a cron expression, evaluated in UTC — local time
+would make a daily job run twice, or not at all, on the two days a year the
+clocks change. Targets resolve at run time, so a device added to a group is
+picked up without editing the schedule. A missed window is not replayed: if the
+worker was down six hours, a five-minute job runs once on recovery rather than
+seventy-two times. Claiming is a conditional update, so two workers racing
+produce exactly one dispatch.
+
+**Alerts** are thresholds on the metrics agents already report, plus a
+device-offline rule. Each has a dwell time, which is what stops a single spiky
+sample paging someone at 03:00: the condition must hold continuously before it
+fires. An alert fires once per device and resolves on its own. Delivery goes to
+a webhook (Slack, Discord or any JSON receiver) and/or **Telegram**; the
+channels are independent, and a failure in either never stops the alert being
+recorded.
+
+**Metric retention** matters more than it sounds. Agents heartbeat every 30s,
+so raw samples accumulate at ~120/hour/device — about 92 million rows a year
+across 100 devices, with the dashboard's range queries degrading alongside.
+Samples are rolled into hourly aggregates and the raw rows pruned after 48
+hours, which keeps long-range history at roughly 1/120th the size. Raw rows are
+only ever deleted once their bucket has actually been written.
+
+**Two-factor authentication** is TOTP (RFC 6238), implemented against the spec
+and verified in `totp.test.mjs` against the official test vectors rather than
+trusted to a dependency. Recovery codes are single-use and consumed on
+redemption. Disabling 2FA requires a current code, so a hijacked session cannot
+strip it. A failed second factor consumes login-rate-limit budget, so it cannot
+be brute-forced for free once a password is known.
+
+**Sign-up is closed by default.** `ALLOW_PUBLIC_REGISTRATION=false` means
+accounts come from `pnpm user:create` or an invite. Closing it would otherwise
+break invites — an invited person has no account yet — so a pending invite is
+its own authorisation to register, for that exact address only.
+
 ## Security model
 
 - **MQTTS everywhere.** Devices reach the broker only on TLS 8883. Plaintext
@@ -292,6 +329,43 @@ billed-at-full-rate portion.
 Cache effectiveness is logged on every call — look for `ai usage` with
 `cacheHitRate`.
 
+## Scheduling, alerting and 2FA
+
+**Schedules** run a command on a cron expression, evaluated in UTC — local time
+would make a daily job run twice, or not at all, on the two days a year the
+clocks change. Targets resolve at run time, so a device added to a group is
+picked up without editing the schedule. A missed window is not replayed: if the
+worker was down six hours, a five-minute job runs once on recovery rather than
+seventy-two times. Claiming is a conditional update, so two workers racing
+produce exactly one dispatch.
+
+**Alerts** are thresholds on the metrics agents already report, plus a
+device-offline rule. Each has a dwell time, which is what stops a single spiky
+sample paging someone at 03:00: the condition must hold continuously before it
+fires. An alert fires once per device and resolves on its own. Delivery goes to
+a webhook (Slack, Discord or any JSON receiver) and/or **Telegram**; the
+channels are independent, and a failure in either never stops the alert being
+recorded.
+
+**Metric retention** matters more than it sounds. Agents heartbeat every 30s,
+so raw samples accumulate at ~120/hour/device — about 92 million rows a year
+across 100 devices, with the dashboard's range queries degrading alongside.
+Samples are rolled into hourly aggregates and the raw rows pruned after 48
+hours, which keeps long-range history at roughly 1/120th the size. Raw rows are
+only ever deleted once their bucket has actually been written.
+
+**Two-factor authentication** is TOTP (RFC 6238), implemented against the spec
+and verified in `totp.test.mjs` against the official test vectors rather than
+trusted to a dependency. Recovery codes are single-use and consumed on
+redemption. Disabling 2FA requires a current code, so a hijacked session cannot
+strip it. A failed second factor consumes login-rate-limit budget, so it cannot
+be brute-forced for free once a password is known.
+
+**Sign-up is closed by default.** `ALLOW_PUBLIC_REGISTRATION=false` means
+accounts come from `pnpm user:create` or an invite. Closing it would otherwise
+break invites — an invited person has no account yet — so a pending invite is
+its own authorisation to register, for that exact address only.
+
 ## Security
 
 Zenstier executes root shell commands by design, so the controls that matter
@@ -306,6 +380,8 @@ it.
 | Permission check inside every Server Action | `requirePermission()` |
 | Rank-based authority for role/member changes | `team.service.ts` |
 | AI can propose but never execute; output treated as data | `ai/prompts.ts` |
+| TOTP second factor, single-use recovery codes | `auth/totp.ts` |
+| Public sign-up closed by default | `ALLOW_PUBLIC_REGISTRATION` |
 | Deleting a team revokes every device credential first | `deleteTeam()` |
 | Failed-login limit (8/account, 20/IP per 15 min) | `auth.ts` `authorize()` |
 | Enrollment attempt limit (20/IP per 10 min) | `/api/v1/agent/enroll` |
@@ -314,12 +390,18 @@ it.
 | TLS verification always on, no skip-verify knob | agent + worker |
 | Secrets hashed; plaintext shown exactly once | tokens, invites, MQTT passwords |
 
-Two suites assert these rather than assuming them:
+Three tools assert these rather than assuming them:
 
 ```bash
-pnpm dynsec:verify   # 15 broker isolation + live-revocation assertions
-pnpm rbac:verify     # 14 privilege-escalation and tenancy assertions
+pnpm dynsec:verify      # 15 broker isolation + live-revocation assertions
+pnpm rbac:verify        # 14 privilege-escalation and tenancy assertions
+pnpm dynsec:reconcile   # drift between the broker and the database
 ```
+
+The reconciler matters because the services keep both sides in step but a
+manual SQL fix, a restore from backup or an interrupted delete does not. An
+orphaned device credential is a machine that can still connect after it was
+removed; `--fix` clears them.
 
 Brute-force limiting lives inside the Auth.js `authorize()` callback, not in
 the login Server Action, because `/api/auth/callback/credentials` is reachable

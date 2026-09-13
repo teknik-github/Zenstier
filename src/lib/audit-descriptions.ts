@@ -39,6 +39,9 @@ const ACTION_LABELS: Record<string, string> = {
   USER_REGISTERED: "Account created",
   USER_LOGIN: "Signed in",
   USER_LOGIN_FAILED: "Failed sign-in",
+  USER_2FA_ENABLED: "Two-factor enabled",
+  USER_2FA_DISABLED: "Two-factor disabled",
+  USER_2FA_RECOVERY_USED: "Recovery code used",
   DEVICE_ENROLLED: "Device enrolled",
   DEVICE_DELETED: "Device deleted",
   DEVICE_STATUS_CHANGED: "Device status changed",
@@ -62,6 +65,14 @@ const ACTION_LABELS: Record<string, string> = {
   DEVICE_GROUP_UPDATED: "Broadcast group changed",
   DEVICE_GROUP_DELETED: "Broadcast group deleted",
   AI_CONSULTED: "AI console used",
+  SCHEDULE_CREATED: "Schedule created",
+  SCHEDULE_UPDATED: "Schedule updated",
+  SCHEDULE_DELETED: "Schedule deleted",
+  SCHEDULE_RAN: "Schedule ran",
+  ALERT_RULE_CREATED: "Alert rule created",
+  ALERT_RULE_UPDATED: "Alert rule updated",
+  ALERT_RULE_DELETED: "Alert rule deleted",
+  ALERT_FIRED: "Alert fired",
 };
 
 export function auditLabel(action: string): string {
@@ -142,6 +153,31 @@ export function auditDetail(entry: AuditEntryLike): string {
         return `${name} · ${count} permission${count === 1 ? "" : "s"}`;
       }
       return name ?? "a role";
+    }
+
+    case "ALERT_FIRED": {
+      const name = str(m.name);
+      const device = str(m.device);
+      const value = typeof m.value === "number" ? `${m.value}%` : null;
+      return [name, device, value].filter(Boolean).join(" · ") || "an alert";
+    }
+
+    case "ALERT_RULE_CREATED":
+    case "ALERT_RULE_UPDATED":
+    case "ALERT_RULE_DELETED":
+      return str(m.name) ?? "a rule";
+
+    case "SCHEDULE_CREATED":
+    case "SCHEDULE_UPDATED":
+    case "SCHEDULE_DELETED":
+      return str(m.name) ?? "a schedule";
+
+    case "SCHEDULE_RAN": {
+      const name = str(m.name);
+      const n = typeof m.devices === "number" ? m.devices : null;
+      return name && n !== null
+        ? `${name} · ${n} device${n === 1 ? "" : "s"}`
+        : (name ?? "a schedule");
     }
 
     case "AI_CONSULTED": {

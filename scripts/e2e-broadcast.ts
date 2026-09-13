@@ -15,9 +15,15 @@ import {
 import { dispatchCommand } from "../src/server/modules/commands/command.service";
 
 async function main() {
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { email: "admin@hat.my.id" },
-  });
+  // Whoever owns the fleet on this install: an argument, then an env var, then
+  // simply the first account. Never a hard-coded address.
+  const email = process.argv[2] ?? process.env.ZENSTIER_OWNER_EMAIL;
+  const user = email
+    ? await prisma.user.findUniqueOrThrow({ where: { email } })
+    : await prisma.user.findFirstOrThrow({
+        where: { memberships: { some: { team: { devices: { some: {} } } } } },
+        orderBy: { createdAt: "asc" },
+      });
   const teamId = (await prisma.teamMember.findFirstOrThrow({
     where: { userId: user.id },
   })).teamId;

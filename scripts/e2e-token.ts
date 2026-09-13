@@ -5,8 +5,16 @@ import { createEnrollmentToken } from "../src/server/modules/tokens/token.servic
 
 async function main() {
   const [email, name] = process.argv.slice(2);
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) throw new Error(`no user ${email}`);
+  // An empty email means "whoever owns this install", so the script is not
+  // tied to the account it happened to be written against.
+  const user = email
+    ? await prisma.user.findUnique({ where: { email } })
+    : ((await prisma.user.findFirst({
+        where: { memberships: { some: { team: { devices: { some: {} } } } } },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await prisma.user.findFirst({ orderBy: { createdAt: "asc" } })));
+  if (!user) throw new Error(email ? `no user ${email}` : "no users exist yet");
   const token = await createEnrollmentToken(user.id, name ?? "device", "cli");
   console.log(JSON.stringify(token));
   await prisma.$disconnect();

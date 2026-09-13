@@ -32,6 +32,12 @@ const SYS_UPTIME = "$SYS/broker/uptime";
 const GRACE_WINDOW_MS = 120_000;
 const STALE_AFTER_MS = 180_000;
 const REAPER_INTERVAL_MS = 15_000;
+/** Roll-up and prune. Hourly is enough: buckets only close once an hour. */
+const RETENTION_INTERVAL_MS = 60 * 60_000;
+/** Cron granularity is one minute, so checking twice a minute is ample. */
+const SCHEDULER_INTERVAL_MS = 30_000;
+/** Agents heartbeat every 30s; evaluating each minute is enough resolution. */
+const ALERT_INTERVAL_MS = 60_000;
 
 let graceUntil = 0;
 let client: MqttClient | null = null;
@@ -196,9 +202,40 @@ async function main() {
     log.error("reaper failed", { error: String(err) }),
   ), REAPER_INTERVAL_MS);
 
+  const { runMetricRetention } = await import(
+    "@/server/modules/devices/retention.service"
+  );
+  const retain = () =>
+    void runMetricRetention().catch((err) =>
+      log.error("metric retention failed", { error: String(err) }),
+    );
+  retain(); // once at startup, so an upgrade drains any backlog immediately
+  const retention = setInterval(retain, RETENTION_INTERVAL_MS);
+
+  const { runDueSchedules } = await import(
+    "@/server/modules/schedules/schedule.service"
+  );
+  const scheduler = setInterval(() => {
+    void runDueSchedules().catch((err) =>
+      log.error("scheduler failed", { error: String(err) }),
+    );
+  }, SCHEDULER_INTERVAL_MS);
+
+  const { evaluateAlerts } = await import(
+    "@/server/modules/alerts/alert.service"
+  );
+  const alerts = setInterval(() => {
+    void evaluateAlerts().catch((err) =>
+      log.error("alert evaluation failed", { error: String(err) }),
+    );
+  }, ALERT_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });
     clearInterval(reaper);
+    clearInterval(retention);
+    clearInterval(scheduler);
+    clearInterval(alerts);
     try {
       await client?.endAsync();
       await prisma.$disconnect();

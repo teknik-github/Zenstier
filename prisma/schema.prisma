@@ -42,10 +42,31 @@ enum OutputStream {
   SYSTEM
 }
 
+enum AlertMetric {
+  CPU
+  MEMORY
+  DISK
+  /// Fires when a device stops reporting, rather than on a metric value.
+  OFFLINE
+}
+
+enum AlertState {
+  OK
+  FIRING
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  PAUSED
+}
+
 enum AuditAction {
   USER_REGISTERED
   USER_LOGIN
   USER_LOGIN_FAILED
+  USER_2FA_ENABLED
+  USER_2FA_DISABLED
+  USER_2FA_RECOVERY_USED
   DEVICE_ENROLLED
   DEVICE_DELETED
   DEVICE_STATUS_CHANGED
@@ -69,6 +90,14 @@ enum AuditAction {
   DEVICE_GROUP_UPDATED
   DEVICE_GROUP_DELETED
   AI_CONSULTED
+  SCHEDULE_CREATED
+  SCHEDULE_UPDATED
+  SCHEDULE_DELETED
+  SCHEDULE_RAN
+  ALERT_RULE_CREATED
+  ALERT_RULE_UPDATED
+  ALERT_RULE_DELETED
+  ALERT_FIRED
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,14 +105,21 @@ enum AuditAction {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  passwordHash  String?   @map("password_hash")
-  emailVerified DateTime? @map("email_verified")
-  image         String?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id           String  @id @default(cuid())
+  email        String  @unique
+  name         String?
+  passwordHash String? @map("password_hash")
+
+  /// TOTP second factor. The secret is only meaningful once confirmed, so it
+  /// is written at setup but ignored until totpEnabled flips.
+  totpSecret      String?   @map("totp_secret")
+  totpEnabled     Boolean   @default(false) @map("totp_enabled")
+  /// Bcrypt hashes of single-use recovery codes.
+  totpBackupCodes String[]  @default([]) @map("totp_backup_codes")
+  emailVerified   DateTime? @map("email_verified")
+  image           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   /// Team selected in the UI. Falls back to the first membership.
   activeTeamId String? @map("active_team_id")
@@ -99,6 +135,8 @@ model User {
   memberships  TeamMember[]
   sentInvites  TeamInvite[]   @relation("InvitedBy")
   activeTeam   Team?          @relation("ActiveTeam", fields: [activeTeamId], references: [id], onDelete: SetNull)
+  schedules    Schedule[]
+  alertRules   AlertRule[]
 
   @@map("users")
 }
@@ -153,14 +191,21 @@ model VerificationToken {
 /// command history belong to a team, never directly to a user, so access can
 /// be granted and revoked by changing membership alone.
 model Team {
-  id         String   @id @default(cuid())
-  name       String
-  slug       String   @unique
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
   /// Personal teams are created automatically at registration and cannot be
   /// deleted while they are their owner's only team.
-  isPersonal Boolean  @default(false) @map("is_personal")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  isPersonal       Boolean  @default(false) @map("is_personal")
+  /// Default destination for alert notifications. Slack, Discord or a generic
+  /// JSON receiver — the payload suits all three.
+  webhookUrl       String?  @map("webhook_url")
+  /// Telegram delivery. The bot token is a credential: it is write-only in the
+  /// UI and never rendered back.
+  telegramBotToken String?  @map("telegram_bot_token")
+  telegramChatId   String?  @map("telegram_chat_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   members      TeamMember[]
   roles        Role[]
@@ -172,6 +217,8 @@ model Team {
   batches      CommandBatch[]
   auditLogs    AuditLog[]
   activeFor    User[]         @relation("ActiveTeam")
+  schedules    Schedule[]
+  alertRules   AlertRule[]
 
   @@map("teams")
 }
@@ -255,9 +302,10 @@ model DeviceGroup {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  team    Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  devices Device[]
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  devices   Device[]
+  schedules Schedule[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -293,13 +341,15 @@ model Device {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group    DeviceGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  tokens   AuthToken[]
-  commands Command[]
-  outputs  CommandOutput[]
-  metrics  DeviceMetric[]
-  team     Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group           DeviceGroup?         @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  tokens          AuthToken[]
+  commands        Command[]
+  outputs         CommandOutput[]
+  metrics         DeviceMetric[]
+  hourlyMetrics   DeviceMetricHourly[]
+  team            Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  alertRuleStates AlertRuleState[]
 
   @@index([userId])
   @@index([teamId])
@@ -463,6 +513,123 @@ model DeviceMetric {
 
   @@index([deviceId, recordedAt])
   @@map("device_metrics")
+}
+
+/// Hourly roll-up of DeviceMetric.
+///
+/// Raw samples arrive every 30s and are pruned after a couple of days; these
+/// aggregates keep long-range history at a bounded, tiny cost.
+model DeviceMetricHourly {
+  id       BigInt   @id @default(autoincrement())
+  deviceId String   @map("device_id")
+  /// Truncated to the hour; one row per device per hour.
+  bucket   DateTime @map("bucket")
+
+  samples Int @default(0)
+
+  cpuAvg   Float @default(0) @map("cpu_avg")
+  cpuMax   Float @default(0) @map("cpu_max")
+  memAvg   Float @default(0) @map("mem_avg")
+  memMax   Float @default(0) @map("mem_max")
+  diskAvg  Float @default(0) @map("disk_avg")
+  diskMax  Float @default(0) @map("disk_max")
+  load1Avg Float @default(0) @map("load1_avg")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, bucket])
+  @@index([bucket])
+  @@map("device_metrics_hourly")
+}
+
+/// A recurring command.
+///
+/// Targets resolve at run time rather than being frozen at creation, so a
+/// device added to a group is picked up by that group's schedules without
+/// anyone editing them.
+model Schedule {
+  id     String @id @default(cuid())
+  teamId String @map("team_id")
+  userId String @map("user_id")
+
+  name    String
+  command String
+  /// Five-field cron expression, evaluated in UTC.
+  cron    String
+  status  ScheduleStatus @default(ACTIVE)
+
+  /// Exactly one of these targets is used.
+  groupId   String?  @map("group_id")
+  deviceIds String[] @default([]) @map("device_ids")
+
+  timeoutMs Int @default(60000) @map("timeout_ms")
+
+  lastRunAt  DateTime? @map("last_run_at")
+  lastStatus String?   @map("last_status")
+  nextRunAt  DateTime? @map("next_run_at")
+  runCount   Int       @default(0) @map("run_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  team  Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group DeviceGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+  @@index([status, nextRunAt])
+  @@map("schedules")
+}
+
+/// A threshold on a metric, evaluated per device.
+model AlertRule {
+  id     String @id @default(cuid())
+  teamId String @map("team_id")
+  userId String @map("user_id")
+
+  name       String
+  metric     AlertMetric
+  /// Percent for CPU/MEMORY/DISK; ignored for OFFLINE.
+  threshold  Float       @default(90)
+  /// The condition must hold this long before firing, which is what stops a
+  /// single spiky sample from paging anyone.
+  forMinutes Int         @default(5) @map("for_minutes")
+
+  enabled    Boolean @default(true)
+  /// Optional per-rule override of the team webhook.
+  webhookUrl String? @map("webhook_url")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  team   Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  states AlertRuleState[]
+
+  @@index([teamId])
+  @@map("alert_rules")
+}
+
+/// Per (rule, device) state machine, so an alert fires once rather than on
+/// every evaluation, and can resolve.
+model AlertRuleState {
+  id       String @id @default(cuid())
+  ruleId   String @map("rule_id")
+  deviceId String @map("device_id")
+
+  state      AlertState @default(OK)
+  /// When the current condition first became true; drives forMinutes.
+  since      DateTime?  @map("since")
+  lastValue  Float      @default(0) @map("last_value")
+  firedAt    DateTime?  @map("fired_at")
+  resolvedAt DateTime?  @map("resolved_at")
+
+  rule   AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  device Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, deviceId])
+  @@index([state])
+  @@map("alert_rule_states")
 }
 
 model AuditLog {

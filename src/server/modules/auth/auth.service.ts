@@ -1,6 +1,7 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import { AuditAction } from "@/generated/prisma/enums";
+import { env } from "@/server/config/env";
 import { prisma } from "@/server/infrastructure/db/prisma";
 import { logger } from "@/server/infrastructure/logger/logger";
 import { hashPassword, verifyPassword } from "./password";
@@ -15,6 +16,38 @@ export class EmailAlreadyRegisteredError extends Error {
   }
 }
 
+export class RegistrationClosedError extends Error {
+  constructor() {
+    super(
+      "Sign-up is disabled on this server. Ask an administrator for an invite.",
+    );
+    this.name = "RegistrationClosedError";
+  }
+}
+
+/**
+ * Decides whether an email may create an account.
+ *
+ * Closing sign-up would otherwise break invites, since an invited person has
+ * no account yet and so cannot accept one. A pending invite is therefore its
+ * own authorisation to register — but only for the exact address it was sent
+ * to.
+ */
+export async function mayRegister(email: string): Promise<boolean> {
+  if (env.ALLOW_PUBLIC_REGISTRATION) return true;
+
+  const invite = await prisma.teamInvite.findFirst({
+    where: {
+      email: email.toLowerCase(),
+      acceptedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+  return Boolean(invite);
+}
+
 export interface AuthenticatedUser {
   id: string;
   email: string;
@@ -24,6 +57,10 @@ export interface AuthenticatedUser {
 export async function registerUser(
   input: RegisterInput,
 ): Promise<AuthenticatedUser> {
+  if (!(await mayRegister(input.email))) {
+    throw new RegistrationClosedError();
+  }
+
   const passwordHash = await hashPassword(input.password);
 
   try {

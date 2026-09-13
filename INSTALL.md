@@ -191,6 +191,21 @@ Admin and Operator receive it by default.
 > ship an additive SQL migration the way
 > `prisma/migrations/*_grant_ai_use_to_system_roles` does.
 
+## Optional: alert delivery
+
+Alerts are recorded regardless; these just decide where they are *sent*.
+Configure under **Alerts → Where alerts are sent**, then use **Send test
+alert** to confirm before relying on it.
+
+- **Webhook** — Slack, Discord, or any JSON receiver. One URL suits all three:
+  the payload carries a rendered `text` field and structured data.
+- **Telegram** — create a bot with `@BotFather`, add it to your group, then
+  read the chat ID from `api.telegram.org/bot<token>/getUpdates`. The token is
+  stored write-only and never rendered back.
+
+If the official Telegram host is blocked where you run Zenstier, point
+`TELEGRAM_API_BASE` at a mirror.
+
 ## Production notes
 
 The default setup is a **development** one. Before exposing it:
@@ -209,6 +224,12 @@ The default setup is a **development** one. Before exposing it:
   with `./scripts/bootstrap.sh --reset-env` followed by `pnpm dynsec:seed`.
 - **Back up Postgres.** It holds the audit trail, which is the point of the
   product.
+- **Leave `ALLOW_PUBLIC_REGISTRATION=false`.** Create the first account with
+  `pnpm user:create`; everyone after that arrives by invite.
+- **Turn on 2FA** for every account that can run commands. After the broker
+  ACLs and RBAC, a password is the weakest remaining link.
+- **Tune retention** with `METRICS_RAW_RETENTION_HOURS` (default 48) and
+  `METRICS_HOURLY_RETENTION_DAYS` (default 90) to taste.
 
 ## Troubleshooting
 

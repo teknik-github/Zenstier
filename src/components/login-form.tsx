@@ -32,9 +32,13 @@ function SubmitButton({ label }: { label: string }) {
 
 export function LoginForm({
   mode = "login",
+  notice,
   className,
   ...props
-}: { mode?: "login" | "register" } & React.ComponentProps<"div">) {
+}: {
+  mode?: "login" | "register"
+  notice?: string
+} & React.ComponentProps<"div">) {
   const isRegister = mode === "register"
   const [state, formAction] = useActionState<AuthActionState, FormData>(
     isRegister ? registerAction : loginAction,
@@ -57,6 +61,12 @@ export function LoginForm({
                     : "Login to your Zenstier account"}
                 </p>
               </div>
+              {notice && (
+                <p className="rounded-md bg-muted px-3 py-2 text-center text-sm text-muted-foreground">
+                  {notice}
+                </p>
+              )}
+
               {isRegister && (
                 <Field>
                   <FieldLabel htmlFor="name">Name</FieldLabel>
@@ -102,6 +112,26 @@ export function LoginForm({
                   required
                 />
               </Field>
+              {!isRegister && (
+                <Field>
+                  <FieldLabel htmlFor="totp">
+                    Two-factor code{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (if enabled)
+                    </span>
+                  </FieldLabel>
+                  <Input
+                    id="totp"
+                    name="totp"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                    maxLength={20}
+                  />
+                </Field>
+              )}
+
               {state.error && (
                 <p
                   role="alert"

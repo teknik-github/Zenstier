@@ -30,6 +30,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        totp: { label: "Two-factor code", type: "text" },
       },
       authorize: async (raw, request) => {
         const parsed = credentialsSchema.safeParse(raw);
@@ -70,7 +71,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        // A correct password clears the account's failure budget.
+        // Password is right; now the second factor, if the account has one.
+        const { verifySecondFactor } = await import(
+          "@/server/modules/auth/totp.service"
+        );
+        if (!(await verifySecondFactor(user.id, parsed.data.totp ?? ""))) {
+          // Counts as a failed attempt: otherwise the second factor could be
+          // brute-forced for free once a password is known.
+          await consumeRateLimit(acctKey, LOGIN_ACCOUNT_LIMIT, LOGIN_WINDOW_MS);
+          logger.warn("second factor rejected", {
+            module: "auth",
+            email: parsed.data.email,
+          });
+          return null;
+        }
+
+        // A correct sign-in clears the account's failure budget.
         await resetRateLimit(acctKey);
         return { id: user.id, email: user.email, name: user.name };
       },

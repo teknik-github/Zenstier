@@ -26,7 +26,8 @@
     "setup": "./scripts/bootstrap.sh",
     "agent:build": "make -C agent build-all",
     "rbac:verify": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/verify-rbac.ts",
-    "e2e:broadcast": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/e2e-broadcast.ts"
+    "e2e:broadcast": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/e2e-broadcast.ts",
+    "dynsec:reconcile": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/reconcile-broker.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",
@@ -41,6 +42,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.6",
+    "cron-parser": "^5.10.0",
     "ioredis": "^6.0.0",
     "lucide-react": "^1.45.0",
     "mqtt": "^5.15.2",
@@ -48,6 +50,7 @@
     "next-auth": "5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "prisma": "7.10.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "3.8.0",
@@ -61,6 +64,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",

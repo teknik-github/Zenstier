@@ -6,7 +6,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${1:?usage: spawn-test-device.sh <device-name> [owner-email]}"
-OWNER="${2:-admin@hat.my.id}"
+# Falls back to the env var, then to whichever account exists — so the script
+# works on any install rather than only the one it was written on.
+OWNER="${2:-${ZENSTIER_OWNER_EMAIL:-}}"
 CONTAINER="zenstier-dev-${NAME}"
 
 LAN_IP="${ZENSTIER_LAN_IP:-$(ip -4 -o addr show scope global | awk 'NR==1{split($4,a,"/"); print a[1]}')}"
@@ -17,7 +19,7 @@ cd "$REPO_ROOT"
 echo "==> building agent binary"
 make -C agent build >/dev/null
 
-echo "==> issuing enrollment token for ${NAME} (owner: ${OWNER})"
+echo "==> issuing enrollment token for ${NAME}${OWNER:+ (owner: ${OWNER})}"
 TOKEN_JSON="$(pnpm exec tsx --conditions=react-server --tsconfig tsconfig.worker.json \
   scripts/e2e-token.ts "$OWNER" "$NAME" 2>/dev/null | tail -1)"
 TOKEN="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['plaintextToken'])" "$TOKEN_JSON")"

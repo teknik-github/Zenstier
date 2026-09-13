@@ -6,6 +6,7 @@ import { registerSchema } from "@/server/modules/auth/auth.schema";
 import {
   registerUser,
   EmailAlreadyRegisteredError,
+  RegistrationClosedError,
 } from "@/server/modules/auth/auth.service";
 
 export interface AuthActionState {
@@ -20,12 +21,14 @@ export async function loginAction(
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
+      totp: formData.get("totp") ?? "",
       redirectTo: "/dashboard",
     });
     return {};
   } catch (err) {
     if (err instanceof AuthError) {
-      return { error: "Invalid email or password" };
+      // Deliberately does not say which of the three was wrong.
+      return { error: "Invalid email, password or two-factor code" };
     }
     // next-auth signals a successful redirect by throwing.
     throw err;
@@ -48,6 +51,9 @@ export async function registerAction(
   try {
     await registerUser(parsed.data);
   } catch (err) {
+    if (err instanceof RegistrationClosedError) {
+      return { error: err.message };
+    }
     if (err instanceof EmailAlreadyRegisteredError) {
       return { error: "That email is already registered" };
     }

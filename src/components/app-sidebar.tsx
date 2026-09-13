@@ -30,6 +30,8 @@ import {
   SearchIcon,
   RadioTowerIcon,
   SparklesIcon,
+  ClockIcon,
+  BellIcon,
 } from "lucide-react"
 
 const navMain = [
@@ -49,6 +51,18 @@ const navMain = [
     title: "Console",
     url: "/dashboard/console",
     icon: <TerminalIcon />,
+    permission: "command:read",
+  },
+  {
+    title: "Alerts",
+    url: "/dashboard/alerts",
+    icon: <BellIcon />,
+    permission: "device:read",
+  },
+  {
+    title: "Schedules",
+    url: "/dashboard/schedules",
+    icon: <ClockIcon />,
     permission: "command:read",
   },
   {
@@ -97,6 +111,11 @@ const documents = [
     url: "/dashboard/team/roles",
     icon: <ShieldCheckIcon />,
     permission: "team:manage_roles",
+  },
+  {
+    name: "Security & 2FA",
+    url: "/dashboard/security",
+    icon: <ShieldCheckIcon />,
   },
   {
     name: "Team settings",
