@@ -66,6 +66,19 @@ const envSchema = z.object({
   METRICS_HOURLY_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
 
   /**
+   * Allows webhook URLs that resolve to private or loopback addresses.
+   *
+   * Off by default: a webhook is set with `device:update`, and a team Owner is
+   * not the server administrator, so an unguarded URL lets a team member make
+   * the server probe its own network. Turn it on only if you deliberately post
+   * to a Mattermost or Gotify on your own LAN.
+   */
+  ALLOW_PRIVATE_WEBHOOKS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
+  /**
    * Telegram API base. Overridable because the official host is blocked in
    * several countries and operators there run a mirror or egress proxy.
    */

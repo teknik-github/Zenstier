@@ -27,7 +27,8 @@
     "agent:build": "make -C agent build-all",
     "rbac:verify": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/verify-rbac.ts",
     "e2e:broadcast": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/e2e-broadcast.ts",
-    "dynsec:reconcile": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/reconcile-broker.ts"
+    "dynsec:reconcile": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/reconcile-broker.ts",
+    "ssrf:verify": "tsx --conditions=react-server --tsconfig tsconfig.worker.json scripts/verify-ssrf.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",

@@ -160,6 +160,18 @@ worker was down six hours, a five-minute job runs once on recovery rather than
 seventy-two times. Claiming is a conditional update, so two workers racing
 produce exactly one dispatch.
 
+**Webhook URLs are guarded against SSRF.** Setting one needs only
+`device:update`, and a team Owner is not the server administrator — so an
+unguarded URL would let a team member make the server POST to cloud metadata at
+`169.254.169.254`, or probe its own network. Hostnames are resolved and every
+returned address checked against loopback, link-local, RFC1918, CGNAT and
+unique-local ranges; the check runs at request time as well as on save, because
+DNS can change in between. Redirects are not followed, so a 302 cannot land
+somewhere the original host would not, and the test action reports success or
+failure rather than an HTTP status, which would otherwise make it a port
+scanner. Set `ALLOW_PRIVATE_WEBHOOKS=true` if you deliberately post to a
+Mattermost or Gotify on your own LAN.
+
 **Alerts** are thresholds on the metrics agents already report, plus a
 device-offline rule. Each has a dwell time, which is what stops a single spiky
 sample paging someone at 03:00: the condition must hold continuously before it
@@ -339,6 +351,18 @@ worker was down six hours, a five-minute job runs once on recovery rather than
 seventy-two times. Claiming is a conditional update, so two workers racing
 produce exactly one dispatch.
 
+**Webhook URLs are guarded against SSRF.** Setting one needs only
+`device:update`, and a team Owner is not the server administrator — so an
+unguarded URL would let a team member make the server POST to cloud metadata at
+`169.254.169.254`, or probe its own network. Hostnames are resolved and every
+returned address checked against loopback, link-local, RFC1918, CGNAT and
+unique-local ranges; the check runs at request time as well as on save, because
+DNS can change in between. Redirects are not followed, so a 302 cannot land
+somewhere the original host would not, and the test action reports success or
+failure rather than an HTTP status, which would otherwise make it a port
+scanner. Set `ALLOW_PRIVATE_WEBHOOKS=true` if you deliberately post to a
+Mattermost or Gotify on your own LAN.
+
 **Alerts** are thresholds on the metrics agents already report, plus a
 device-offline rule. Each has a dwell time, which is what stops a single spiky
 sample paging someone at 03:00: the condition must hold continuously before it
@@ -382,6 +406,7 @@ it.
 | AI can propose but never execute; output treated as data | `ai/prompts.ts` |
 | TOTP second factor, single-use recovery codes | `auth/totp.ts` |
 | Public sign-up closed by default | `ALLOW_PUBLIC_REGISTRATION` |
+| Webhook URLs cannot reach internal addresses | `net/safe-fetch.ts` |
 | Deleting a team revokes every device credential first | `deleteTeam()` |
 | Failed-login limit (8/account, 20/IP per 15 min) | `auth.ts` `authorize()` |
 | Enrollment attempt limit (20/IP per 10 min) | `/api/v1/agent/enroll` |
@@ -395,6 +420,7 @@ Three tools assert these rather than assuming them:
 ```bash
 pnpm dynsec:verify      # 15 broker isolation + live-revocation assertions
 pnpm rbac:verify        # 14 privilege-escalation and tenancy assertions
+pnpm ssrf:verify        # 25 outbound-URL assertions on the webhook guard
 pnpm dynsec:reconcile   # drift between the broker and the database
 ```
 

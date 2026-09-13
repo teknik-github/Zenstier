@@ -6,6 +6,11 @@ import {
   DeviceStatus,
 } from "@/generated/prisma/enums";
 import { env } from "@/server/config/env";
+import {
+  BlockedUrlError,
+  assertPublicUrl,
+  safeFetch,
+} from "@/server/infrastructure/net/safe-fetch";
 import { prisma } from "@/server/infrastructure/db/prisma";
 import { logger } from "@/server/infrastructure/logger/logger";
 
@@ -58,8 +63,16 @@ export async function createRule(
       throw new AlertError("Threshold must be between 1 and 100 percent");
     }
   }
-  if (input.webhookUrl && !/^https?:\/\//i.test(input.webhookUrl)) {
-    throw new AlertError("Webhook URL must start with http:// or https://");
+  if (input.webhookUrl) {
+    try {
+      await assertPublicUrl(input.webhookUrl);
+    } catch (err) {
+      throw new AlertError(
+        err instanceof BlockedUrlError
+          ? err.message
+          : "That webhook URL could not be validated",
+      );
+    }
   }
 
   const rule = await prisma.alertRule.create({
@@ -153,8 +166,16 @@ export async function setNotificationSettings(
   teamId: string,
   input: NotificationSettings,
 ) {
-  if (input.webhookUrl && !/^https?:\/\//i.test(input.webhookUrl)) {
-    throw new AlertError("Webhook URL must start with http:// or https://");
+  if (input.webhookUrl) {
+    try {
+      await assertPublicUrl(input.webhookUrl);
+    } catch (err) {
+      throw new AlertError(
+        err instanceof BlockedUrlError
+          ? err.message
+          : "That webhook URL could not be validated",
+      );
+    }
   }
   if (input.telegramBotToken && !/^\d+:[\w-]{20,}$/.test(input.telegramBotToken)) {
     throw new AlertError(
@@ -270,15 +291,21 @@ export async function sendTestNotification(
 
   if (team.webhookUrl) {
     try {
-      const r = await fetch(team.webhookUrl, {
+      const r = await safeFetch(team.webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
         body: JSON.stringify({ text, content: text }),
       });
-      result.webhook = r.ok ? "delivered" : `rejected (HTTP ${r.status})`;
+      // Deliberately coarse: returning the exact status of an arbitrary URL
+      // would make this a service scanner for the host's own network.
+      result.webhook = r.ok
+        ? "delivered"
+        : r.status >= 300 && r.status < 400
+          ? "the endpoint redirected; redirects are not followed"
+          : "the endpoint rejected it";
     } catch (err) {
-      result.webhook = `failed: ${String(err)}`;
+      result.webhook =
+        err instanceof BlockedUrlError ? err.message : "delivery failed";
     }
   }
 
@@ -488,10 +515,9 @@ async function notify(
   // and neither may stop alerts being evaluated or recorded.
   if (url) {
     try {
-      const response = await fetch(url, {
+      const response = await safeFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
         body: JSON.stringify({
           text: summary,
           content: summary, // Discord uses `content`
