@@ -326,3 +326,12 @@ samples), memory via `MemAvailable`, root filesystem usage, load averages,
 process count and uptime. The worker stores these in `device_metrics` and
 pushes them over SSE, so the overview chart and the per-device meters update
 live.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Zenstier is intended for machines you own or are explicitly authorised to
+administer. Installing an agent requires root on the target and a token minted
+from the operator's own dashboard, and every command is attributed in the audit
+log. Please keep it that way.

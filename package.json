@@ -2,6 +2,7 @@
   "name": "zenstier",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "concurrently -n web,worker -c cyan,magenta \"next dev -H 0.0.0.0 -p 3020\" \"pnpm worker:dev\"",
     "build": "next build",
