@@ -1,0 +1,487 @@
+// Zenstier — remote management platform
+// Prisma 7 schema. Datasource URL is supplied by prisma7.config.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  UNKNOWN
+}
+
+enum TokenStatus {
+  ACTIVE
+  REVOKED
+  CONSUMED
+}
+
+enum CommandStatus {
+  PENDING // persisted, not yet published to the broker
+  DISPATCHED // published to MQTT, awaiting agent acknowledgement
+  RUNNING // agent reported it started executing
+  SUCCEEDED // exit code 0
+  FAILED // non-zero exit code
+  TIMEOUT // agent or server timed out the command
+  CANCELED
+}
+
+enum OutputStream {
+  STDOUT
+  STDERR
+  SYSTEM
+}
+
+enum AuditAction {
+  USER_REGISTERED
+  USER_LOGIN
+  USER_LOGIN_FAILED
+  DEVICE_ENROLLED
+  DEVICE_DELETED
+  DEVICE_STATUS_CHANGED
+  TOKEN_CREATED
+  TOKEN_REVOKED
+  COMMAND_DISPATCHED
+  COMMAND_COMPLETED
+  COMMAND_RATE_LIMITED
+  TEAM_CREATED
+  TEAM_MEMBER_INVITED
+  TEAM_MEMBER_JOINED
+  TEAM_MEMBER_REMOVED
+  TEAM_MEMBER_ROLE_CHANGED
+  TEAM_ROLE_CREATED
+  TEAM_ROLE_UPDATED
+  TEAM_ROLE_DELETED
+  TEAM_INVITE_REVOKED
+  TEAM_SETTINGS_UPDATED
+  TEAM_DELETED
+  DEVICE_GROUP_CREATED
+  DEVICE_GROUP_UPDATED
+  DEVICE_GROUP_DELETED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity (Auth.js + credentials)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?   @map("password_hash")
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  /// Team selected in the UI. Falls back to the first membership.
+  activeTeamId String? @map("active_team_id")
+
+  accounts     Account[]
+  sessions     Session[]
+  devices      Device[]
+  deviceGroups DeviceGroup[]
+  authTokens   AuthToken[]
+  commands     Command[]
+  batches      CommandBatch[]
+  auditLogs    AuditLog[]
+  memberships  TeamMember[]
+  sentInvites  TeamInvite[]   @relation("InvitedBy")
+  activeTeam   Team?          @relation("ActiveTeam", fields: [activeTeamId], references: [id], onDelete: SetNull)
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Teams and role-based access control
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ownership boundary for everything in the product. Devices, tokens and
+/// command history belong to a team, never directly to a user, so access can
+/// be granted and revoked by changing membership alone.
+model Team {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  /// Personal teams are created automatically at registration and cannot be
+  /// deleted while they are their owner's only team.
+  isPersonal Boolean  @default(false) @map("is_personal")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  members      TeamMember[]
+  roles        Role[]
+  invites      TeamInvite[]
+  devices      Device[]
+  deviceGroups DeviceGroup[]
+  authTokens   AuthToken[]
+  commands     Command[]
+  batches      CommandBatch[]
+  auditLogs    AuditLog[]
+  activeFor    User[]         @relation("ActiveTeam")
+
+  @@map("teams")
+}
+
+/// A named set of permissions, scoped to one team.
+///
+/// System roles are seeded for every team and cannot be renamed or deleted;
+/// everything else is fully editable by a member holding `team:manage_roles`.
+model Role {
+  id          String   @id @default(cuid())
+  teamId      String   @map("team_id")
+  name        String
+  description String?
+  /// Permission slugs. The catalogue lives in
+  /// src/server/modules/teams/permissions.ts and is validated on write.
+  permissions String[]
+  isSystem    Boolean  @default(false) @map("is_system")
+  /// Higher rank wins when comparing authority; used to stop a member editing
+  /// or removing someone above them.
+  rank        Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  team    Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  members TeamMember[]
+  invites TeamInvite[]
+
+  @@unique([teamId, name])
+  @@index([teamId])
+  @@map("roles")
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String   @map("team_id")
+  userId   String   @map("user_id")
+  roleId   String   @map("role_id")
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@index([teamId])
+  @@map("team_members")
+}
+
+model TeamInvite {
+  id     String @id @default(cuid())
+  teamId String @map("team_id")
+  email  String
+  roleId String @map("role_id")
+
+  /// Only the hash is stored; the raw invite link is shown once.
+  tokenHash   String    @unique @map("token_hash")
+  invitedById String    @map("invited_by_id")
+  expiresAt   DateTime  @map("expires_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  team      Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role      Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  invitedBy User @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, email])
+  @@index([teamId])
+  @@map("team_invites")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fleet
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeviceGroup {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  teamId    String   @map("team_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team    Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  devices Device[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([teamId])
+  @@map("device_groups")
+}
+
+model Device {
+  id       String @id @default(cuid())
+  /// Who enrolled it. Ownership for access control is the team.
+  userId   String @map("user_id")
+  teamId   String @map("team_id")
+  /// Public identifier used in MQTT topics: zenstier/{deviceId}/...
+  deviceId String @unique @map("device_id")
+  name     String
+
+  status           DeviceStatus @default(UNKNOWN)
+  lastSeenAt       DateTime?    @map("last_seen_at")
+  /// Identifies the agent's current MQTT session. Used to discard a late
+  /// Last-Will from a session that has already been superseded.
+  currentSessionId String?      @map("current_session_id")
+
+  // OS / host facts reported by the agent at enrollment and on each connect.
+  hostname     String?
+  osName       String? @map("os_name")
+  osVersion    String? @map("os_version")
+  kernel       String?
+  arch         String?
+  agentVersion String? @map("agent_version")
+
+  groupId String? @map("group_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group    DeviceGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  tokens   AuthToken[]
+  commands Command[]
+  outputs  CommandOutput[]
+  metrics  DeviceMetric[]
+  team     Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([teamId])
+  @@index([groupId])
+  @@index([teamId, status])
+  @@map("devices")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credentials
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One enrollment token per device. The plaintext token is shown to the user
+/// exactly once; only its hash is stored. On enrollment the token is exchanged
+/// for the per-device MQTT credentials recorded here.
+model AuthToken {
+  id       String  @id @default(cuid())
+  userId   String  @map("user_id")
+  teamId   String  @map("team_id")
+  /// Null until the token is consumed by an enrolling device.
+  deviceId String? @map("device_id")
+
+  /// Short non-secret prefix so the UI can identify a token without storing it.
+  tokenPrefix String @map("token_prefix")
+  /// SHA-256 of the full enrollment token.
+  tokenHash   String @unique @map("token_hash")
+
+  /// Per-device MQTT credentials provisioned in Mosquitto dynamic security.
+  mqttUsername     String @unique @map("mqtt_username")
+  /// Bcrypt hash of the MQTT password. Plaintext is returned to the agent once,
+  /// at enrollment, and otherwise lives only inside the broker.
+  mqttPasswordHash String @map("mqtt_password_hash")
+
+  status     TokenStatus @default(ACTIVE)
+  label      String?
+  expiresAt  DateTime?   @map("expires_at")
+  consumedAt DateTime?   @map("consumed_at")
+  revokedAt  DateTime?   @map("revoked_at")
+  lastUsedAt DateTime?   @map("last_used_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([teamId])
+  @@index([deviceId])
+  @@index([status])
+  @@map("auth_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command execution + audit
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A single user action that fans out to one or many devices.
+model CommandBatch {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  teamId    String   @map("team_id")
+  command   String
+  /// Set when the batch was sent to a group broadcast topic.
+  groupId   String?  @map("group_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  commands Command[]
+
+  @@index([userId, createdAt])
+  @@index([teamId, createdAt])
+  @@map("command_batches")
+}
+
+/// Per-device execution record. This is the command history / audit trail.
+model Command {
+  id       String  @id @default(cuid())
+  /// Who issued it.
+  userId   String  @map("user_id")
+  teamId   String  @map("team_id")
+  deviceId String  @map("device_id")
+  batchId  String? @map("batch_id")
+
+  /// Correlation id echoed by the agent so results can be matched back.
+  correlationId String @unique @map("correlation_id")
+
+  command   String
+  status    CommandStatus @default(PENDING)
+  exitCode  Int?          @map("exit_code")
+  stdout    String?
+  stderr    String?
+  truncated Boolean       @default(false)
+  /// Populated when the agent or server reports a transport/exec failure.
+  error     String?
+
+  timeoutMs    Int       @default(60000) @map("timeout_ms")
+  dispatchedAt DateTime? @map("dispatched_at")
+  startedAt    DateTime? @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+  durationMs   Int?      @map("duration_ms")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team    Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  device  Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  batch   CommandBatch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  outputs CommandOutput[]
+
+  @@index([deviceId, createdAt])
+  @@index([userId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([batchId])
+  @@index([status])
+  @@map("command_history")
+}
+
+/// Streamed stdout/stderr chunks. The autoincrementing id doubles as the
+/// monotonic SSE cursor used for `Last-Event-ID` replay.
+model CommandOutput {
+  id        BigInt       @id @default(autoincrement())
+  commandId String       @map("command_id")
+  /// Denormalised so SSE replay can filter by device without a join.
+  deviceId  String       @map("device_id")
+  /// Per-command ordering assigned by the agent.
+  seq       Int
+  stream    OutputStream
+  chunk     String
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  command Command @relation(fields: [commandId], references: [id], onDelete: Cascade)
+  device  Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  /// MQTT QoS 1 is at-least-once: this makes chunk writes idempotent.
+  @@unique([commandId, seq])
+  @@index([deviceId, id])
+  @@map("command_output")
+}
+
+/// Rolling resource samples reported on each agent heartbeat.
+model DeviceMetric {
+  id       BigInt @id @default(autoincrement())
+  deviceId String @map("device_id")
+
+  cpuPercent  Float  @default(0) @map("cpu_percent")
+  memPercent  Float  @default(0) @map("mem_percent")
+  memTotalKb  BigInt @default(0) @map("mem_total_kb")
+  memUsedKb   BigInt @default(0) @map("mem_used_kb")
+  diskPercent Float  @default(0) @map("disk_percent")
+  diskTotalKb BigInt @default(0) @map("disk_total_kb")
+  diskUsedKb  BigInt @default(0) @map("disk_used_kb")
+  load1       Float  @default(0)
+  load5       Float  @default(0)
+  load15      Float  @default(0)
+  uptimeSec   BigInt @default(0) @map("uptime_sec")
+  processes   Int    @default(0)
+
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, recordedAt])
+  @@map("device_metrics")
+}
+
+model AuditLog {
+  id     String  @id @default(cuid())
+  userId String? @map("user_id")
+  teamId String? @map("team_id")
+
+  action     AuditAction
+  targetType String?     @map("target_type")
+  targetId   String?     @map("target_id")
+  metadata   Json?
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  team Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,50 @@
+[Unit]
+Description=Zenstier remote management agent
+Documentation=https://github.com/zenstier/zenstier
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/zenstier run --config /etc/zenstier/config.yaml
+User=root
+Restart=always
+RestartSec=5s
+# Must exceed the agent's own 10s drain window for running commands.
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Resource guards. These turn a runaway command from "the server dies" into
+# "the agent's cgroup dies and systemd restarts it".
+LimitNOFILE=8192
+TasksMax=512
+MemoryMax=512M
+OOMScoreAdjust=-500
+
+# Deliberately NOT sandboxed.
+#
+# systemd sandboxing (ProtectSystem=strict, PrivateTmp, NoNewPrivileges,
+# SystemCallFilter, ...) is inherited by every process the agent spawns. On a
+# general-purpose management agent that breaks the operations the product
+# exists to perform: ProtectSystem=strict makes `apt install` fail, PrivateTmp
+# hides files the admin expects in /tmp, NoNewPrivileges breaks sudo/su and
+# every setuid binary, and SystemCallFilter=@system-service blocks mount,
+# reboot and modprobe.
+#
+# It also provides little real defence: an attacker who can run commands here
+# is already root and can escape with `systemd-run --scope`. Security comes
+# from token-gated enrollment, per-device broker credentials with pattern
+# ACLs, verified TLS, the 0600 config, and the server-side audit log.
+#
+# For monitoring-only deployments use zenstier-restricted.service instead.
+ProtectClock=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenstier
+
+[Install]
+WantedBy=multi-user.target

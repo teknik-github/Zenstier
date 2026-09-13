@@ -1,0 +1,45 @@
+[Unit]
+Description=Zenstier agent (restricted / monitoring-only)
+Documentation=https://github.com/zenstier/zenstier
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/zenstier run --config /etc/zenstier/config.yaml
+User=root
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+
+LimitNOFILE=8192
+TasksMax=256
+MemoryMax=256M
+
+# Hardened profile. Commands run under these restrictions too, so package
+# management, mounts, reboots, sudo and setuid binaries WILL FAIL. Use this
+# only where the agent is not expected to perform administrative changes.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+ReadWritePaths=/etc/zenstier /var/lib/zenstier
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenstier
+
+[Install]
+WantedBy=multi-user.target

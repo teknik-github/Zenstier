@@ -1,0 +1,74 @@
+name: zenstier
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: zenstier-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-zenstier}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-zenstier}
+    ports:
+      - "127.0.0.1:5480:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zenstier} -d ${POSTGRES_DB:-zenstier}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [zenstier]
+
+  redis:
+    image: redis:7-alpine
+    container_name: zenstier-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:6385:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [zenstier]
+
+  mosquitto:
+    image: eclipse-mosquitto:2.1.2-alpine
+    container_name: zenstier-mosquitto
+    restart: unless-stopped
+    environment:
+      # Consumed only on first boot, when dynamic-security.json does not exist.
+      # Setting it also suppresses creation of the `democlient` account, which
+      # would otherwise be granted read/write on '#'.
+      MOSQUITTO_DYNSEC_PASSWORD: ${MQTT_ADMIN_PASSWORD:?set MQTT_ADMIN_PASSWORD in .env}
+    volumes:
+      - ./infra/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./infra/mosquitto/certs:/mosquitto/certs:ro
+      - mosquitto-data:/mosquitto/data
+    ports:
+      - "8883:8883"
+      # 1883 is deliberately NOT published: it is container-local admin only.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_sub -h 127.0.0.1 -p 1883 -i healthcheck -u admin
+          -P "$$MOSQUITTO_DYNSEC_PASSWORD"
+          -t '$$SYS/broker/uptime' -C 1 -W 3 -q 0 >/dev/null 2>&1
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 10s
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    networks: [zenstier]
+
+volumes:
+  postgres-data:
+  mosquitto-data:
+
+networks:
+  zenstier:
+    driver: bridge

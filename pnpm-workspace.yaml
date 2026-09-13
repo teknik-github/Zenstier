@@ -1,0 +1,14 @@
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+  prisma: true
+  "@prisma/engines": true
+  esbuild: true
+
+# Both are pulled in by the Prisma CLI, not by our runtime (we use the
+# PostgreSQL adapter), but they carry advisories so they are pinned forward.
+#   mysql2       GHSA-rgwj-5xj2-c3m3 + auth-plugin downgrade
+#   deepmerge-ts stack exhaustion on recursive graphs
+overrides:
+  mysql2: ">=3.23.1"
+  deepmerge-ts: ">=8.0.0"
