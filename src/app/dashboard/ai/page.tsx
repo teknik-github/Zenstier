@@ -2,15 +2,19 @@ import { requirePermissionPage } from "@/server/modules/teams/context";
 import { prisma } from "@/server/infrastructure/db/prisma";
 import { isAiConfigured } from "@/server/config/env";
 import { AiConsole } from "@/components/ai/ai-console";
+import { listGroups } from "@/server/modules/devices/group.service";
 import type { DeviceRow } from "@/components/devices/device-manager";
 
 export default async function AiPage() {
   const ctx = await requirePermissionPage("ai:use");
 
-  const devices = await prisma.device.findMany({
-    where: { teamId: ctx.team.id },
-    orderBy: [{ status: "asc" }, { name: "asc" }],
-  });
+  const [devices, groups] = await Promise.all([
+    prisma.device.findMany({
+      where: { teamId: ctx.team.id },
+      orderBy: [{ status: "asc" }, { name: "asc" }],
+    }),
+    listGroups(ctx.team.id),
+  ]);
 
   const rows: DeviceRow[] = devices.map((d) => ({
     deviceId: d.deviceId,
@@ -24,6 +28,7 @@ export default async function AiPage() {
     arch: d.arch,
     agentVersion: d.agentVersion,
     enrolled: true,
+    groupId: d.groupId,
   }));
 
   return (
@@ -35,6 +40,11 @@ export default async function AiPage() {
       </p>
       <AiConsole
         devices={rows}
+        groups={groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+          deviceCount: g.devices.length,
+        }))}
         canExecute={ctx.can("command:execute")}
         configured={isAiConfigured}
       />

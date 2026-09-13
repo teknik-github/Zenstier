@@ -2,7 +2,11 @@ import "server-only";
 import { env, isAiConfigured } from "@/server/config/env";
 import { logger } from "@/server/infrastructure/logger/logger";
 import { SYSTEM_PROMPT } from "./prompts";
-import { buildFleetContext, buildHistoryContext } from "./context";
+import {
+  buildDeviceRoster,
+  buildHistoryContext,
+  buildMetricsSnapshot,
+} from "./context";
 
 const log = logger.child({ module: "ai" });
 
@@ -18,7 +22,9 @@ export interface ChatMessage {
   content: string;
 }
 
-const MAX_HISTORY_TURNS = 12;
+// Generous, because truncating shifts the cached prefix and forces a re-read
+// of the whole conversation.
+const MAX_HISTORY_TURNS = 24;
 const MAX_MESSAGE_CHARS = 4000;
 
 /**
@@ -39,21 +45,48 @@ export async function* streamChat(
     );
   }
 
-  const [fleet, recent] = await Promise.all([
-    buildFleetContext(teamId, deviceIds),
+  const [roster, metrics, recent] = await Promise.all([
+    buildDeviceRoster(teamId, deviceIds),
+    buildMetricsSnapshot(teamId, deviceIds),
     buildHistoryContext(teamId, deviceIds),
   ]);
 
+  /*
+   * Message order is chosen for prefix caching, which providers key on the
+   * longest identical leading run of tokens.
+   *
+   *   [0]    system prompt   — identical for every request, everywhere
+   *   [1]    device roster   — stable for a team; excludes metrics on purpose
+   *   [2..N] conversation    — byte-identical and append-only, so the cached
+   *                            prefix grows with the conversation
+   *   [N+1]  volatile block  — metrics and recent output, LAST so it can only
+   *                            invalidate itself
+   *
+   * Two layouts look reasonable and both destroy the cache. Putting the
+   * volatile block near the front makes every request a miss from position 1
+   * onward. Appending it to the newest user turn is worse in a subtle way:
+   * that turn becomes history on the next request, where it no longer carries
+   * the block, so its bytes differ and the prefix breaks mid-conversation.
+   */
+  const turns = history.slice(-MAX_HISTORY_TURNS).map((m) => ({
+    role: m.role,
+    content: m.content.slice(0, MAX_MESSAGE_CHARS),
+  }));
+
+  const volatileBlock = [metrics, recent].filter(Boolean).join("\n\n");
+
   const messages = [
     { role: "system" as const, content: SYSTEM_PROMPT },
-    {
-      role: "system" as const,
-      content: [fleet, recent].filter(Boolean).join("\n\n"),
-    },
-    ...history.slice(-MAX_HISTORY_TURNS).map((m) => ({
-      role: m.role,
-      content: m.content.slice(0, MAX_MESSAGE_CHARS),
-    })),
+    { role: "system" as const, content: roster },
+    ...turns,
+    ...(volatileBlock
+      ? [
+          {
+            role: "system" as const,
+            content: `Live context as of this request:\n\n${volatileBlock}`,
+          },
+        ]
+      : []),
   ];
 
   const url = `${env.AI_BASE_URL.replace(/\/$/, "")}/v1/chat/completions`;
@@ -70,6 +103,8 @@ export async function* streamChat(
         model: env.AI_MODEL,
         messages,
         stream: true,
+        // Ask for usage on the final chunk so cache effectiveness is visible.
+        stream_options: { include_usage: true },
         temperature: 0.2,
         max_tokens: env.AI_MAX_OUTPUT_TOKENS,
       }),
@@ -113,6 +148,21 @@ export async function* streamChat(
         if (!data || data === "[DONE]") continue;
         try {
           const parsed = JSON.parse(data);
+
+          // Arrives on the final chunk when include_usage is set.
+          const usage = parsed?.usage;
+          if (usage) {
+            const hit = usage.prompt_cache_hit_tokens ?? 0;
+            const total = usage.prompt_tokens ?? 0;
+            log.info("ai usage", {
+              model: env.AI_MODEL,
+              promptTokens: total,
+              completionTokens: usage.completion_tokens ?? 0,
+              cachedTokens: hit,
+              cacheHitRate: total ? `${Math.round((hit / total) * 100)}%` : "0%",
+            });
+          }
+
           const delta = parsed?.choices?.[0]?.delta?.content;
           if (typeof delta === "string" && delta) yield delta;
         } catch {

@@ -122,6 +122,34 @@ the UI before you can run them.
 Using the assistant requires the `ai:use` permission and is recorded in the
 audit log with the prompt and model.
 
+### Prompt caching
+
+Providers bill a cached prefix at a fraction of the normal rate, keyed on the
+longest identical *leading* run of tokens. Message order is therefore chosen
+deliberately:
+
+```
+[0]    system prompt   identical for every request, everywhere
+[1]    device roster   stable per team — deliberately excludes metrics
+[2..N] conversation    byte-identical and append-only
+[N+1]  live context    metrics + recent output, LAST so it invalidates only itself
+```
+
+Two layouts look reasonable and both destroy the cache. Putting live context
+near the front makes every request a miss from position 1 onward. Appending it
+to the newest user turn is worse in a subtle way: that turn becomes history on
+the next request where it no longer carries the block, so its bytes differ and
+the prefix breaks mid-conversation.
+
+Past command output is also trimmed hard (1200 bytes per command, 5 commands),
+because it is simultaneously the largest part of the prompt and the part that
+can never be cached. Measured on a three-turn conversation, the two changes
+together took the prompt from ~2740 to ~1660 tokens and roughly halved the
+billed-at-full-rate portion.
+
+Cache effectiveness is logged on every call — look for `ai usage` with
+`cacheHitRate`.
+
 ## Security model
 
 - **MQTTS everywhere.** Devices reach the broker only on TLS 8883. Plaintext
@@ -235,6 +263,34 @@ the UI before you can run them.
 
 Using the assistant requires the `ai:use` permission and is recorded in the
 audit log with the prompt and model.
+
+### Prompt caching
+
+Providers bill a cached prefix at a fraction of the normal rate, keyed on the
+longest identical *leading* run of tokens. Message order is therefore chosen
+deliberately:
+
+```
+[0]    system prompt   identical for every request, everywhere
+[1]    device roster   stable per team — deliberately excludes metrics
+[2..N] conversation    byte-identical and append-only
+[N+1]  live context    metrics + recent output, LAST so it invalidates only itself
+```
+
+Two layouts look reasonable and both destroy the cache. Putting live context
+near the front makes every request a miss from position 1 onward. Appending it
+to the newest user turn is worse in a subtle way: that turn becomes history on
+the next request where it no longer carries the block, so its bytes differ and
+the prefix breaks mid-conversation.
+
+Past command output is also trimmed hard (1200 bytes per command, 5 commands),
+because it is simultaneously the largest part of the prompt and the part that
+can never be cached. Measured on a three-turn conversation, the two changes
+together took the prompt from ~2740 to ~1660 tokens and roughly halved the
+billed-at-full-rate portion.
+
+Cache effectiveness is logged on every call — look for `ai usage` with
+`cacheHitRate`.
 
 ## Security
 

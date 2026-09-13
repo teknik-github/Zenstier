@@ -30,6 +30,7 @@ export default async function DevicesPage() {
     arch: d.arch,
     agentVersion: d.agentVersion,
     enrolled: d.tokens.some((t) => t.status === "CONSUMED"),
+    groupId: d.groupId,
   }));
 
   return (

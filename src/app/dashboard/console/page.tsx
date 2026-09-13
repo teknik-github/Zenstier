@@ -27,6 +27,7 @@ export default async function ConsolePage() {
     arch: d.arch,
     agentVersion: d.agentVersion,
     enrolled: true,
+    groupId: d.groupId,
   }));
 
   return (

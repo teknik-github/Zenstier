@@ -7,6 +7,7 @@ import { runCommandAction } from "@/app/_actions/commands";
 import { useEventStream } from "@/components/realtime/event-stream";
 import type { DeviceRow } from "@/components/devices/device-manager";
 import { ChevronDownIcon, CheckIcon, TrashIcon } from "lucide-react";
+import type { ConsoleGroup } from "@/components/console/command-console";
 
 /**
  * Reads a text stream, handing back the text accumulated so far.
@@ -95,7 +96,9 @@ const HELP = [
   "  targets              list selected devices",
   "  use <name|id>        select a single device",
   "  use all              select every online device",
+  "  use group <name>     target a broadcast group (one publish, many devices)",
   "  use none             clear the selection",
+  "  groups               list broadcast groups",
   "  run <n>              run proposal [n] on the selected devices",
   "",
   "  Up / Down            browse history",
@@ -105,10 +108,12 @@ const HELP = [
 
 export function AiConsole({
   devices,
+  groups,
   canExecute,
   configured,
 }: {
   devices: DeviceRow[];
+  groups: ConsoleGroup[];
   canExecute: boolean;
   configured: boolean;
 }) {
@@ -120,6 +125,9 @@ export function AiConsole({
   const [historyIndex, setHistoryIndex] = React.useState(-1);
   const [busy, setBusy] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  // When set, approved commands go out on the group's broadcast topic, and the
+  // assistant is given that group's devices as context.
+  const [broadcast, setBroadcast] = React.useState<ConsoleGroup | null>(null);
 
   const nextId = React.useRef(1);
   const nextProposal = React.useRef(1);
@@ -136,10 +144,16 @@ export function AiConsole({
     () => devices.filter((d) => statusOf(d) === "ONLINE"),
     [devices, statusOf],
   );
-  const selected = React.useMemo(
-    () => chosen ?? (online.length === 1 ? [online[0]!.deviceId] : []),
-    [chosen, online],
+  const groupMembers = React.useCallback(
+    (groupId: string) =>
+      devices.filter((d) => d.groupId === groupId).map((d) => d.deviceId),
+    [devices],
   );
+
+  const selected = React.useMemo(() => {
+    if (broadcast) return groupMembers(broadcast.id);
+    return chosen ?? (online.length === 1 ? [online[0]!.deviceId] : []);
+  }, [broadcast, chosen, online, groupMembers]);
   const setSelected = React.useCallback(
     (next: string[] | ((prev: string[]) => string[])) => {
       setChosen((prev) => {
@@ -190,7 +204,12 @@ export function AiConsole({
       { id: entryId, kind: "run", text: "", proposal: n, command },
     ]);
 
-    const result = await runCommandAction(command, selected);
+    const result = await runCommandAction(
+      command,
+      selected,
+      60_000,
+      broadcast ? { groupId: broadcast.id, broadcast: true } : {},
+    );
     setEntries((prev) =>
       prev.map((e) =>
         e.id === entryId
@@ -296,9 +315,21 @@ export function AiConsole({
       case "targets":
         push({ kind: "prompt", text: line });
         note(
-          selected.length
-            ? selected.map((d) => `  ${nameOf(d)}  (${d})`).join("\n")
-            : "  no devices selected",
+          broadcast
+            ? `  broadcast -> ${broadcast.name} (${selected.length} device(s))`
+            : selected.length
+              ? selected.map((d) => `  ${nameOf(d)}  (${d})`).join("\n")
+              : "  no devices selected",
+        );
+        return;
+      case "groups":
+        push({ kind: "prompt", text: line });
+        note(
+          groups.length
+            ? groups
+                .map((g) => `  ${g.name}  (${g.deviceCount} device(s))`)
+                .join("\n")
+            : "  no groups defined",
         );
         return;
       case "run": {
@@ -314,12 +345,28 @@ export function AiConsole({
       case "use": {
         push({ kind: "prompt", text: line });
         const arg = args.join(" ");
+        if (args[0] === "group") {
+          const wanted = args.slice(1).join(" ");
+          const group = groups.find(
+            (g) => g.name.toLowerCase() === wanted.toLowerCase(),
+          );
+          if (!group) {
+            note(`  no group named "${wanted}"`);
+            return;
+          }
+          setBroadcast(group);
+          setChosen([]);
+          note(`  broadcasting to ${group.name} (${group.deviceCount} device(s))`);
+          return;
+        }
         if (arg === "all") {
+          setBroadcast(null);
           setSelected(online.map((d) => d.deviceId));
           note(`  selected ${online.length} online device(s)`);
           return;
         }
         if (arg === "none") {
+          setBroadcast(null);
           setSelected([]);
           note("  cleared the selection");
           return;
@@ -331,6 +378,7 @@ export function AiConsole({
           note(`  no device matching "${arg}"`);
           return;
         }
+        setBroadcast(null);
         setSelected([match.deviceId]);
         note(`  selected ${match.name}`);
         return;
@@ -374,8 +422,9 @@ export function AiConsole({
     }
   }
 
-  const prompt =
-    selected.length === 0
+  const prompt = broadcast
+    ? `ai@${broadcast.name}`
+    : selected.length === 0
       ? "ai"
       : selected.length === 1
         ? `ai:${nameOf(selected[0]!)}`
@@ -417,12 +466,22 @@ Add to .env and restart — any OpenAI-compatible endpoint works:
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setSelected(online.map((d) => d.deviceId))}
+          onClick={() => {
+            setBroadcast(null);
+            setSelected(online.map((d) => d.deviceId));
+          }}
         >
           Select all online ({online.length})
         </Button>
-        {selected.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => setSelected([])}>
+        {(selected.length > 0 || broadcast) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setBroadcast(null);
+              setSelected([]);
+            }}
+          >
             Clear
           </Button>
         )}
@@ -436,6 +495,28 @@ Add to .env and restart — any OpenAI-compatible endpoint works:
           <span className="hidden sm:inline">Clear output</span>
         </Button>
       </div>
+
+      {pickerOpen && groups.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
+          <span className="text-xs font-medium text-muted-foreground">
+            Broadcast groups
+          </span>
+          {groups.map((group) => (
+            <Button
+              key={group.id}
+              size="sm"
+              variant={broadcast?.id === group.id ? "default" : "outline"}
+              onClick={() => {
+                setBroadcast(broadcast?.id === group.id ? null : group);
+                setChosen([]);
+              }}
+            >
+              {group.name}
+              <Badge variant="secondary">{group.deviceCount}</Badge>
+            </Button>
+          ))}
+        </div>
+      )}
 
       {pickerOpen && (
         <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -487,7 +568,12 @@ Add to .env and restart — any OpenAI-compatible endpoint works:
           <span className="size-3 rounded-full bg-yellow-500/80" />
           <span className="size-3 rounded-full bg-green-500/80" />
           <span className="ml-2 font-mono text-xs text-zinc-400">
-            assistant · {selected.length === 0 ? "no target" : selected.map(nameOf).join(", ")}
+            assistant ·{" "}
+            {broadcast
+              ? `broadcast: ${broadcast.name} (${selected.length} devices)`
+              : selected.length === 0
+                ? "no target"
+                : selected.map(nameOf).join(", ")}
           </span>
         </div>
 

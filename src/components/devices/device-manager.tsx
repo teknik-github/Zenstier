@@ -37,6 +37,8 @@ export interface DeviceRow {
   arch: string | null;
   agentVersion: string | null;
   enrolled: boolean;
+  /** Broadcast group membership, used to expand a group into its devices. */
+  groupId?: string | null;
   /** Most recent stored sample; live SSE updates supersede it. */
   metrics?: {
     cpuPercent: number;

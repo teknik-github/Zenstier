@@ -8,7 +8,7 @@ import { wrapDeviceOutput } from "./prompts";
  * Only ever data the caller's own team owns, so the assistant cannot be talked
  * into describing another tenant's fleet.
  */
-export async function buildFleetContext(
+export async function buildDeviceRoster(
   teamId: string,
   selectedDeviceIds: string[],
 ): Promise<string> {
@@ -31,25 +31,20 @@ export async function buildFleetContext(
     return "No devices are currently in scope.";
   }
 
+  // Deliberately excludes metrics. This block is a stable prefix the provider
+  // can cache across a whole conversation; anything that changes every 30
+  // seconds lives in the snapshot instead.
   const lines = devices.map((d) => {
-    const m = d.metrics[0];
     const os = [d.osName, d.osVersion].filter(Boolean).join(" ") || "unknown OS";
-    const facts = [
+    return [
       `- ${d.name} (${d.deviceId})`,
-      `status=${d.status}`,
       `os=${os}`,
       d.kernel ? `kernel=${d.kernel}` : null,
       d.arch ? `arch=${d.arch}` : null,
       d.group ? `group=${d.group.name}` : null,
-      m ? `cpu=${m.cpuPercent.toFixed(0)}%` : null,
-      m ? `mem=${m.memPercent.toFixed(0)}%` : null,
-      m ? `disk=${m.diskPercent.toFixed(0)}%` : null,
-      m ? `load1=${m.load1}` : null,
-      m ? `uptime=${Math.floor(Number(m.uptimeSec) / 3600)}h` : null,
     ]
       .filter(Boolean)
       .join(" ");
-    return facts;
   });
 
   return [
@@ -61,6 +56,51 @@ export async function buildFleetContext(
 }
 
 /**
+ * The volatile half: current status and resource metrics.
+ *
+ * Kept out of the cached prefix because it changes on every agent heartbeat.
+ */
+export async function buildMetricsSnapshot(
+  teamId: string,
+  selectedDeviceIds: string[],
+): Promise<string> {
+  const devices = await prisma.device.findMany({
+    where: {
+      teamId,
+      ...(selectedDeviceIds.length
+        ? { deviceId: { in: selectedDeviceIds } }
+        : {}),
+    },
+    orderBy: [{ name: "asc" }],
+    take: 100,
+    select: {
+      name: true,
+      status: true,
+      metrics: { orderBy: { recordedAt: "desc" }, take: 1 },
+    },
+  });
+
+  if (devices.length === 0) return "";
+
+  const lines = devices.map((d) => {
+    const m = d.metrics[0];
+    return [
+      `- ${d.name}`,
+      `status=${d.status}`,
+      m ? `cpu=${m.cpuPercent.toFixed(0)}%` : null,
+      m ? `mem=${m.memPercent.toFixed(0)}%` : null,
+      m ? `disk=${m.diskPercent.toFixed(0)}%` : null,
+      m ? `load1=${m.load1}` : null,
+      m ? `uptime=${Math.floor(Number(m.uptimeSec) / 3600)}h` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  });
+
+  return ["Current status and metrics:", ...lines].join("\n");
+}
+
+/**
  * Recent command history, including output.
  *
  * Output is wrapped as untrusted data: it comes from managed machines and must
@@ -69,7 +109,7 @@ export async function buildFleetContext(
 export async function buildHistoryContext(
   teamId: string,
   selectedDeviceIds: string[],
-  limit = 6,
+  limit = 5,
 ): Promise<string> {
   const commands = await prisma.command.findMany({
     where: {
